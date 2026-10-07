@@ -11,6 +11,7 @@ Agent skills in the open [Agent Skills](https://agentskills.io) `SKILL.md` forma
 | [node-express-typescript-upgrade](skills/node-express-typescript-upgrade/SKILL.md) | Backend | Detect a Node.js + Express + TypeScript setup, move it to `legacy/` and rebuild it on the latest Node LTS, Express and TypeScript with API parity, contract tests, a mock toggle for external integrations and in-service security fixes |
 | [angular-upgrade](skills/angular-upgrade/SKILL.md) | Frontend | Detect an AngularJS / Angular setup and bring it to the latest Angular (standalone, signals, built-in control flow): AngularJS rebuilt beside `legacy/`, Angular 2+ upgraded in place, with feature parity, a mock API toggle and frontend-only security fixes |
 | [dotnet-upgrade](skills/dotnet-upgrade/SKILL.md) | Backend | Detect a .NET Framework / .NET setup, move it to `legacy/` and rebuild it on the latest .NET LTS and ASP.NET Core with API parity, contract tests, a mock toggle for external integrations and in-service security fixes |
+| [react-upgrade](skills/react-upgrade/SKILL.md) | Frontend | Detect a React setup (CRA / webpack / Vite / Next.js, class or function components) and bring it to the latest React with hooks: older and CRA apps rebuilt on Vite beside `legacy/`, modern Vite and Next.js apps upgraded in place, with feature parity, a mock API toggle and frontend-only security fixes |
 
 ## Install
 
