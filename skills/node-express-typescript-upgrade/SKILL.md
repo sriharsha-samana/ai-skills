@@ -55,6 +55,32 @@ If the user provides a scaffold or reference project, read it first. Take from i
 
 ---
 
+## Git commits (save points)
+
+Commit at every logical save point, so any change can be reverted on its own with `git revert <sha>`.
+
+- **Branch:** use the branch the user names. If none is named, ask before the first commit.
+- **When to commit:** after each completed unit of work that builds and passes its tests. Typical units are the audit report (if saved to the repo), the `legacy/` move, the new project setup, the API/mock layer, auth, each store or module, each feature or route group, each version step, and each security fix. Never let uncommitted work pile up across several features.
+- **One concern per commit.** Don't mix a refactor, a feature port and a security fix in one commit.
+- **The `legacy/` move is its own commit,** containing only `git mv` renames and no content changes, so Git keeps file history.
+- **Every security fix is its own commit,** so it can be reverted independently.
+- **Every commit must leave the project building and its tests passing.** If that's impossible for a step, say so in the commit body.
+- **Message format** (Conventional Commits):
+  ```
+  <type>(<scope>): <short summary, imperative, ≤ 72 chars>
+
+  What changed and why.
+  Parity: what was verified (contract tests, manual checks).
+  Deviations: none | <description + user approval>
+  Refs: <feature inventory item / scanner rule ID / migration guide section>
+  ```
+  Types: `chore` (moves, setup, deps), `feat` (feature ported), `fix` (bug or security fix), `refactor`, `test`, `build`, `docs`.
+  Examples: `chore(legacy): move existing app to legacy/`, `feat(users): port users list and detail pages`, `fix(security): sanitize v-html in ProductDescription (semgrep vue-v-html)`.
+- **Never commit** secrets, real `.env` files, credentials, `node_modules`, build output or real customer data.
+- **Never rewrite shared history:** no amending, rebasing or force-pushing commits that have been pushed.
+- **Push** only if the user asks, or if that's the repo's established practice.
+- **Milestone tags:** tag key points so they're easy to roll back to (e.g. `upgrade/legacy-moved`, `upgrade/parity-complete`, `upgrade/pre-cleanup`). Push tags only if the user asks.
+
 ## Step 0 — Detect the current setup
 
 | Check | Where to look |
@@ -246,6 +272,29 @@ Rules for security fixes:
 - [ ] `legacy/` untouched; deletion only on user approval
 - [ ] Scan findings fixed or reported; `npm audit` and other scans re-run show no new issues
 - [ ] Deployment changes (Node runtime, base image, start command) listed for the user, not applied
+- [ ] All work committed at logical save points; the working tree is clean
+- [ ] Mocks and `legacy/` kept; they're removed only through the cleanup step, when the user asks
+
+## Final step — Cleanup (only when the user asks)
+
+Never do this automatically, and never as part of another step. Only start it when the user explicitly asks, after the done checklist is complete. The user may ask for both parts or just one.
+
+1. Confirm the scope with the user (mocks, `legacy/`, or both) and list exactly what will be removed.
+2. Tag the current commit first (e.g. `upgrade/pre-cleanup`) so everything can be restored.
+3. **Remove the mocks** (its own commit, e.g. `chore(mocks): remove mock API layer`):
+   - Delete each client's `mock.ts` and `fixtures/`.
+   - In each client's `index.ts`, export the real client directly (remove the ternary and the mock import).
+   - Remove `mockExternals` from `src/config.ts` and the startup warning.
+   - Keep the real implementations and their behaviour exactly as they are.
+   - Tests that relied on mocks: ask the user whether to convert them to test-only doubles inside the test folder, or remove them. Don't silently delete test coverage.
+   - Remove the mock flag from `.env.example` and docs. Leave real `.env` files and deployment config to the user, and tell them which variable is no longer used.
+4. **Remove `legacy/`** (its own commit, e.g. `chore(legacy): remove legacy app after cut-over`):
+   - `git rm -r legacy/`.
+   - Remove `legacy/` entries from ignore lists (build config, tsconfig, lint, test runner, scanners).
+   - Remove contract-test notes or scripts that only applied to recording against legacy. Keep the contract tests themselves if they still run.
+   - If deploy config at the root still references legacy paths, don't change it. Report it to the user.
+5. Build, run all tests and start the app after each removal commit.
+6. Report what was removed, the commit SHAs, and the tag to restore from.
 
 ## Report after each step
 
@@ -254,4 +303,5 @@ Rules for security fixes:
 - Feature inventory items verified
 - Security fixes made (scanner rule or ID, file, change) and findings reported but not fixed
 - Validation run and result
+- Commits made (SHA + message) and tags created
 - Next step
