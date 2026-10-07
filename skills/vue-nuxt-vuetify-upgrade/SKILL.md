@@ -15,7 +15,7 @@ These hold for the whole upgrade and override every default below, including the
 2. **Preserve business logic.** Port calculations, rules, conditions, formatting and data transforms exactly, including quirks the code depends on. Change syntax, never the logic. If logic looks wrong, flag it to the user; don't fix it.
 3. **Preserve APIs.** Same endpoints, methods, headers, query params, request bodies, response handling, error handling and call order or timing (e.g. debounce, polling, retries).
 4. **Preserve application behaviour.** Same URLs, redirects, auth flow, session handling, stored keys (localStorage, cookies), rendering mode (SPA / SSR / static), loading and empty states, and side effects (analytics, downloads, notifications).
-5. **Frontend only.** Change only frontend code. Never change backend code, even if it lives in the same repo, and never change the backend, API contracts, database, infrastructure, CI/CD or deployment. If parity seems to need a non-frontend change, stop and ask.
+5. **Frontend only.** Change only frontend code. Never change backend code, even if it lives in the same repo, and never change API contracts, the database, infrastructure, CI/CD or deployment. If parity seems to need a non-frontend change, stop and ask.
 6. **Security fixes are allowed** (see "Vulnerability fixes"), but only within the frontend and without breaking rules 1–5.
 
 Any deviation, however small, must be listed in the step report with its reason and approved by the user.
