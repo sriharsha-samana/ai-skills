@@ -1,6 +1,6 @@
 ---
 name: play-framework-upgrade
-description: Detect a Java Play Framework project's current setup (Play 2.x/3.x, sbt, Java, Akka/Pekko, Ebean/JPA, Guice) and upgrade it step by step to the latest stable Play on the latest supported Java LTS, with full API and behaviour parity, contract tests as a safety net, a switchable mock layer for external integrations, and security fixes limited to this service. Use for any Play Framework (Java) version upgrade or migration.
+description: Backend-only. Detect a Java Play Framework service's current setup (Play 2.x/3.x, sbt, Java, Akka/Pekko, Ebean/JPA, Guice), move it to legacy/ and rebuild it module by module on the latest stable Play and Java LTS, with full API and behaviour parity, contract tests recorded against legacy, a switchable mock layer for external integrations, and security fixes limited to this backend. Use for any Play Framework (Java) version upgrade or migration.
 ---
 
 # Java Play Framework → Latest Upgrade
@@ -15,8 +15,8 @@ These hold for the whole upgrade and override every default below, including the
 2. **Preserve business logic.** Change APIs and syntax required by the upgrade, never the logic. Keep calculations, rules, conditions, transactions and their ordering exactly. If logic looks wrong, flag it to the user; don't fix it.
 3. **Preserve the API contract.** Same routes, HTTP methods, path and query params, request parsing, status codes, headers, cookies, JSON field names, null and empty handling, date and number formats, and error response bodies.
 4. **Preserve application behaviour.** Same auth and session handling (cookie names, secret, expiry), same DB schema and queries, same outbound calls (URLs, payloads, timeouts, retries), same config keys and env vars, same logging of business events.
-5. **This service only.** Change only this repo's code, build and config. Never change other services, the database schema, infrastructure, CI/CD or deployment. If parity seems to need such a change, stop and ask.
-6. **Security fixes are allowed** (see "Vulnerability fixes"), but only within this service and without breaking rules 1–5.
+5. **Backend only.** Change only this service's backend code, build and config. Frontend code in the repo (Twirl view markup, `public/` JS, CSS and images) is ported unchanged, apart from template syntax needed to compile. Never change frontend apps, other services, the database schema, infrastructure, CI/CD or deployment. If parity seems to need such a change, stop and ask.
+6. **Security fixes are allowed** (see "Vulnerability fixes"), but only within this backend and without breaking rules 1–5.
 
 Any deviation, however small, must be listed in the step report with its reason and approved by the user.
 
@@ -32,12 +32,12 @@ Any deviation, however small, must be listed in the step report with its reason 
 | Area | Default |
 |---|---|
 | Versions | Latest **stable** Play, plus the matching sbt, Scala (for the build) and plugin versions. Java: the latest LTS that Play version supports. Look them up when you start (Play release notes and docs) and never assume from memory. |
-| Approach | Upgrade in place, one Play minor version at a time, following each official migration guide. No rewrite. |
+| Approach | Move the current code to `legacy/`, create a fresh project on the latest Play at the repo root, and port module by module, applying every migration guide between the two versions while porting. `legacy/` is the read-only reference and the parity baseline. |
 | Language | Stay in Java. Modern Java features (records, `var`, switch expressions, text blocks) only in code you otherwise touch, and only when behaviour-neutral. |
 | Async model | Keep the current style (`CompletionStage`, sync actions). Don't rewrite for style. |
 | Persistence | Keep the current library (Ebean, JPA/Hibernate, JDBC, jOOQ, etc.), upgraded to the version compatible with the target Play. No schema changes. |
 | DI | Guice, as now. Remove static or global state only where the new Play version requires it. |
-| External integrations | Behind interfaces, with a switchable mock layer (Step 4) |
+| External integrations | Behind interfaces, with a switchable mock layer (Step 5) |
 | Auth | The existing model and flow, ported as-is |
 | Deployment | Unchanged. If the artifact (dist zip, Docker image, start script) or runtime Java version changes, tell the user; don't change CI/CD yourself. |
 
@@ -48,7 +48,8 @@ If the user provides a scaffold or reference project, read it first. Take from i
 ## Rules
 
 - Detect and audit first. Report before changing code.
-- One version step per change. After each step the build, tests and app startup must pass before moving on.
+- Port one module or feature per change. After each step the build, tests and app startup must pass before moving on.
+- Never edit `legacy/`. Read it to port from.
 - Don't add libraries beyond what the upgrade requires and what the scaffold uses. Ask first.
 - When unsure about an API or version, check the official migration guide or changelog. Do not guess.
 
@@ -72,7 +73,7 @@ If the user provides a scaffold or reference project, read it first. Take from i
 | Tests | JUnit 4/5, `WithApplication`, `Helpers`, Mockito, test coverage level |
 | Other modules | play-mailer, play-json, filters (CSRF, CORS, AllowedHosts, security headers), caching, i18n |
 
-Report a version path, e.g. `2.6 → 2.7 → 2.8 → 2.9 → 3.0 → latest`, plus the Java upgrade point(s) and any blockers (libraries with no version for the target).
+Report the version gap (e.g. Play 2.6 / Java 8 → latest Play / Java LTS), which porting notes from Step 4 apply, and any blockers (libraries with no version for the target).
 
 ## Step 1 — Audit (report only, no edits)
 
@@ -85,23 +86,42 @@ Report a version path, e.g. `2.6 → 2.7 → 2.8 → 2.9 → 3.0 → latest`, pl
 7. **Feature inventory** (the parity baseline): every endpoint and job, its business rules, side effects (DB writes, outbound calls, emails) and error cases.
 8. **Security findings:** dependency scan (e.g. `sbt dependencyCheck`, Snyk or whichever scanner the user names), plus manual checks from "Vulnerability fixes". Give each finding a severity and a proposed fix.
 9. Conventions taken from the scaffold, if provided.
-10. A proposed order of version steps.
+10. A proposed porting order, starting with the smallest and lowest-risk features.
 
-## Step 2 — Safety net before upgrading
+## Step 2 — Move existing code to `legacy/`
 
-- Run the existing tests and record the results. The baseline must be green, or failures must be listed as pre-existing.
-- Add **contract (characterization) tests** for each endpoint in the feature inventory, written against the *current* version: status, headers that matter, and the exact JSON body (golden files are fine). Use `WithApplication` / `Helpers.route` with mocks on (Step 4), so no external system is needed.
-- These tests must pass unchanged after every version step. Changing a golden file means a deviation, which needs user approval.
+1. Use `git mv` so file history is kept.
+2. **Keep at the repo root:** `.git`, CI/CD config, deploy and hosting config (Dockerfile, k8s manifests, Procfile and similar), `.env*` files, `README`, `LICENSE`. Before moving, list what stays and what moves, and confirm with the user.
+3. Move everything else (`app/`, `conf/`, `public/`, `project/`, `build.sbt`, `test/` and so on) into `legacy/`.
+4. Make sure the new build and tooling ignore `legacy/` (sbt only builds the root project; also exclude it from IDE, lint and scanner configs that live in the repo).
+5. `legacy/` is a read-only reference. Never edit it, and don't delete it until the user approves. It can still run on its own (`cd legacy && sbt run`, on its original Java version) for side-by-side comparison.
+6. Root deploy config (e.g. the Dockerfile) still describes the legacy build. List what will need to change at cut-over for the user; don't change it yourself.
 
-## Step 3 — Upgrade step by step
+## Step 3 — Contract tests (the parity safety net)
 
-For each Play version step:
-1. Read that version's official migration guide (Play docs: "Play 2.x Migration Guide" / "Play 3.0 Migration Guide").
-2. Bump the sbt plugin, sbt, Scala (build) and Play module versions together. Upgrade companion libraries (play-ebean, play-mailer, play-ws, pac4j, etc.) to their compatible versions.
-3. Fix compile errors and deprecations required for this step.
-4. Run the tests and contract tests and start the app. Fix before continuing.
+- Run the legacy tests and record the results as the baseline (pre-existing failures listed).
+- In the new project, add **black-box HTTP contract tests** (e.g. `test/contract/`) for each endpoint in the feature inventory: status, headers that matter, cookies, and the exact JSON or HTML body (golden files are fine). The tests take the target from `CONTRACT_BASE_URL`.
+- **Record the goldens against the running legacy app.** Don't add a mock toggle to `legacy/`. If its downstream URLs come from config or env, point them at a local stub server (e.g. WireMock) that serves the same fixtures as the new app's mocks. Otherwise record against the dev environment.
+- Run the same tests against the new app (mocks on) for every ported feature. They must pass unchanged. Changing a golden file means a deviation, which needs user approval.
 
-Key changes to expect (always confirm against the guide for the exact versions):
+## Step 4 — New project and porting
+
+1. Create the new project at the root from the scaffold if one was provided, otherwise from the official Play Java seed for the latest version (`sbt new playframework/play-java-seed.g8`), on the latest sbt and Java LTS. Keep the same package names.
+2. Port in this order, one change at a time:
+   1. Build: the same libraries as legacy, at their latest versions compatible with the target Play.
+   2. Config: `application.conf` with the same keys and env overrides. Set explicitly any value whose default changed between versions.
+   3. Guice modules and DI bindings.
+   4. Filters: the same set, in the same order, with the same settings.
+   5. Auth (Step 6).
+   6. Outbound clients and mocks (Step 5).
+   7. Persistence: the same entities, mappings and queries. Copy evolutions or migrations unchanged and keep `play.evolutions` settings identical, so no new scripts run against existing databases.
+   8. Routes and controllers, feature by feature, with the same paths in `conf/routes`.
+   9. Views and `public/` assets, copied unchanged except for syntax needed to compile.
+   10. Background jobs, actors and schedulers.
+3. While porting each file, apply the changes for every version between legacy and target (table below), always confirmed against the official migration guides ("Play 2.x Migration Guide" / "Play 3.0 Migration Guide").
+4. Run the contract tests for each ported feature.
+
+Porting reference (changes to apply when code comes from that version or older):
 
 | Step | Typical changes |
 |---|---|
@@ -111,13 +131,13 @@ Key changes to expect (always confirm against the guide for the exact versions):
 | 2.9 → 3.0 | Akka → Apache Pekko: groupIds `com.typesafe.play` → `org.playframework` (including the sbt plugin), imports `akka.*` → `org.apache.pekko.*`, config `akka { }` → `pekko { }` (and Play keys that referenced Akka). Otherwise the API is close to 2.9. |
 | 3.0 → latest | Follow the release notes and migration guide. Check the minimum Java version and module compatibility. |
 
-Java upgrade: move to the newest LTS the target Play supports, in its own step. Update the `javac` release, the Docker base image *only if the user approves* (it's deployment), and fix removed JDK APIs (e.g. `javax.xml.bind` → add the JAXB dependency, Nashorn, `SecurityManager`).
+Java: the new project targets the newest LTS the target Play supports. Fix removed JDK APIs while porting (e.g. `javax.xml.bind` → add the JAXB dependency, Nashorn, `SecurityManager`). The runtime and Docker base image are deployment: list the change for the user.
 
-## Step 4 — Mock layer for external integrations
+## Step 5 — Mock layer for external integrations
 
 The goal is to run and test the service without any downstream system and without changing other services or deployment.
 
-- Put each outbound integration behind an interface. If code calls `WSClient` directly in controllers, extract a thin client class that does exactly the same calls (a behaviour-preserving refactor).
+- Put each outbound integration behind an interface. Where legacy calls `WSClient` directly in controllers, port it as a thin client class that makes exactly the same calls.
 - Bind the real or mock implementation in one Guice module, chosen by one config flag.
 
 ```hocon
@@ -157,7 +177,7 @@ Mock rules:
 - The database stays real (local or dev). Swapping in an in-memory DB changes SQL behaviour, so only do it if the user asks.
 - Contract tests run with mocks on.
 
-## Step 5 — Auth (port the existing flow, don't redesign it)
+## Step 6 — Auth (port the existing flow, don't redesign it)
 
 - Keep the same session cookie name and settings, the secret key source, authenticators, action composition, roles and token validation.
 - If a new version rejects the current setup (e.g. secret key length rules, changed cookie defaults), stop and tell the user. Changing the secret invalidates all existing sessions.
@@ -201,13 +221,14 @@ Rules for security fixes:
 - [ ] On the latest stable Play and the newest supported Java LTS (versions recorded in the report)
 - [ ] Feature inventory fully checked off; any deviations approved
 - [ ] Every outbound integration mockable; the toggle works through `MOCK_EXTERNALS`
-- [ ] Only this service changed (no schema, other-service, infra or CI/CD changes)
+- [ ] Only backend code changed (no frontend apps, schema, other-service, infra or CI/CD changes)
+- [ ] `legacy/` untouched; deletion only on user approval
 - [ ] Scan findings fixed or reported, and scans re-run show no new issues
 - [ ] Deployment changes (Java runtime, artifact, base image) listed for the user, not applied
 
 ## Report after each step
 
-- Version step and files changed
+- Module or feature ported, and files changed
 - What changed, and anything that deviates from current behaviour (with the reason)
 - Feature inventory items verified
 - Security fixes made (scanner rule or ID, file, change) and findings reported but not fixed

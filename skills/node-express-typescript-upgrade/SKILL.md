@@ -1,6 +1,6 @@
 ---
 name: node-express-typescript-upgrade
-description: Detect a Node.js + Express + TypeScript service's current setup (Node version, Express 4/5, TypeScript and tsconfig, CJS/ESM, auth, DB, test tools) and upgrade it to the latest Node LTS, Express and TypeScript with full API and behaviour parity, contract tests as a safety net, a switchable mock layer for external integrations, and security fixes limited to this service. Use for any Node, Express or TypeScript version upgrade or migration.
+description: Backend-only. Detect a Node.js + Express + TypeScript service's current setup (Node version, Express 4/5, TypeScript and tsconfig, CJS/ESM, auth, DB, test tools), move it to legacy/ and rebuild it module by module on the latest Node LTS, Express and TypeScript, with full API and behaviour parity, contract tests recorded against legacy, a switchable mock layer for external integrations, and security fixes limited to this backend. Use for any Node, Express or TypeScript version upgrade or migration.
 ---
 
 # Node.js + Express + TypeScript → Latest Upgrade
@@ -15,8 +15,8 @@ These hold for the whole upgrade and override every default below, including the
 2. **Preserve business logic.** Change APIs and syntax required by the upgrade, never the logic. Keep calculations, rules, conditions and ordering exactly. If logic looks wrong, flag it to the user; don't fix it.
 3. **Preserve the API contract.** Same routes and path patterns, methods, query and body parsing results, status codes, headers, cookies, JSON field names, null and empty handling, and error response bodies.
 4. **Preserve application behaviour.** Same auth and session handling (cookie names, secrets, token validation), same DB schema and queries, same outbound calls (URLs, payloads, timeouts, retries), same env vars and config, same logging of business events.
-5. **This service only.** Change only this repo's code, build and config. Never change other services, the database schema, infrastructure, CI/CD or deployment. If parity seems to need such a change, stop and ask.
-6. **Security fixes are allowed** (see "Vulnerability fixes"), but only within this service and without breaking rules 1–5.
+5. **Backend only.** Change only this service's backend code, build and config. Frontend files the service serves (static files, server-rendered templates) are ported unchanged. Never change frontend apps, other services, the database schema, infrastructure, CI/CD or deployment. If parity seems to need such a change, stop and ask.
+6. **Security fixes are allowed** (see "Vulnerability fixes"), but only within this backend and without breaking rules 1–5.
 
 Any deviation, however small, must be listed in the step report with its reason and approved by the user.
 
@@ -32,12 +32,12 @@ Any deviation, however small, must be listed in the step report with its reason 
 | Area | Default |
 |---|---|
 | Versions | Latest **Active LTS** Node.js, latest stable Express, latest stable TypeScript and `@types/*` matching them. Look them up when you start (`npm view express version`, `npm view typescript version`, nodejs.org release schedule) and never assume from memory. |
-| Approach | Upgrade in place, one concern at a time (Node → TypeScript → Express → other dependencies). No rewrite. |
-| Module system | Keep the current one (CommonJS or ESM). Switching is a separate project, only if the user asks. |
-| TypeScript | Latest compiler with a tsconfig that matches the Node target. Turn on stricter flags only if the resulting fixes are behaviour-neutral; otherwise list them as follow-ups. |
+| Approach | Move the current code to `legacy/`, create a fresh project on the latest stack at the repo root, and port module by module, applying the Node, TypeScript and Express changes while porting. `legacy/` is the read-only reference and the parity baseline. |
+| Module system | Same as legacy (CommonJS or ESM) unless the user asks to switch |
+| TypeScript | Latest compiler with a tsconfig that matches the Node target, `strict` on in the new project. Typing fixes while porting must be behaviour-neutral; if strictness would force a logic change, keep the logic and flag it. |
 | Code style | Modern syntax and async/await only in code you otherwise touch, and only when behaviour-neutral |
 | Persistence | Keep the current DB library and ORM, upgraded to a compatible version. No schema changes. |
-| External integrations | Behind a client module per integration, with a switchable mock layer (Step 4) |
+| External integrations | Behind a client module per integration, with a switchable mock layer (Step 5) |
 | Auth | The existing model and flow, ported as-is |
 | Deployment | Unchanged. If the runtime Node version, Docker base image or start command changes, tell the user; don't change CI/CD yourself. |
 
@@ -48,7 +48,8 @@ If the user provides a scaffold or reference project, read it first. Take from i
 ## Rules
 
 - Detect and audit first. Report before changing code.
-- One concern per change. After each step the build, type check, tests and app startup must pass before moving on.
+- Port one module or feature per change. After each step the build, type check, tests and app startup must pass before moving on.
+- Never edit `legacy/`. Read it to port from.
 - Don't add runtime dependencies beyond what the upgrade requires and what the scaffold uses. Ask first.
 - When unsure about an API or version, check the official migration guide or changelog. Do not guess.
 
@@ -72,7 +73,7 @@ If the user provides a scaffold or reference project, read it first. Take from i
 | Tests | Jest, Mocha, Vitest, `supertest`, coverage level |
 | Lint and format | ESLint config format (legacy `.eslintrc` vs flat `eslint.config.*`), Prettier |
 
-Report the upgrade path (e.g. Node 16 → latest LTS, Express 4 → 5, TypeScript 4.x → latest) and any blockers (packages with no compatible version).
+Report the version gap (e.g. Node 16 → latest LTS, Express 4 → 5, TypeScript 4.x → latest), which porting notes from Step 4 apply, and any blockers (packages with no compatible version).
 
 ## Step 1 — Audit (report only, no edits)
 
@@ -85,31 +86,55 @@ Report the upgrade path (e.g. Node 16 → latest LTS, Express 4 → 5, TypeScrip
 7. **Feature inventory** (the parity baseline): every route and job, its business rules, side effects (DB writes, outbound calls, emails) and error cases.
 8. **Security findings:** `npm audit` (or the user's scanner), plus manual checks from "Vulnerability fixes". Give each finding a severity and a proposed fix.
 9. Conventions taken from the scaffold, if provided.
-10. A proposed order of steps.
+10. A proposed porting order, starting with the smallest and lowest-risk features.
 
-## Step 2 — Safety net before upgrading
+## Step 2 — Move existing code to `legacy/`
 
-- Run the existing tests and record the results. The baseline must be green, or failures must be listed as pre-existing.
-- Add **contract (characterization) tests** with `supertest` (or the existing HTTP test tool) for each route in the feature inventory, written against the *current* version: status, relevant headers, exact JSON body (snapshots are fine), plus edge cases for path matching, query parsing (nested objects, arrays), empty bodies and error responses.
-- Run them with mocks on (Step 4), so no external system is needed.
-- These tests must pass unchanged after every step. Changing a snapshot means a deviation, which needs user approval.
+1. Use `git mv` so file history is kept.
+2. **Keep at the repo root:** `.git`, CI/CD config, deploy and hosting config (Dockerfile, k8s manifests, Procfile and similar), `.env*` files, `README`, `LICENSE`. Before moving, list what stays and what moves, and confirm with the user.
+3. Move everything else (`src/`, `test/`, `package.json`, the lockfile, `tsconfig.json`, build and lint config and so on) into `legacy/`.
+4. Make sure the new project's tooling ignores `legacy/`: tsconfig `include: ["src"]` (or `exclude`), ESLint ignores, and test runner roots or ignore patterns.
+5. `legacy/` is a read-only reference. Never edit it, and don't delete it until the user approves. It can still run on its own (`cd legacy && npm install && npm start`, on its original Node version) for side-by-side comparison.
+6. Root deploy config (e.g. the Dockerfile) still describes the legacy build. List what will need to change at cut-over for the user; don't change it yourself.
 
-## Step 3 — Upgrade step by step
+## Step 3 — Contract tests (the parity safety net)
 
-### 3a. Node.js → latest LTS
-- Update `engines`, `.nvmrc` and `@types/node`. Docker image and CI runtime changes are deployment, so list them for the user rather than changing them.
-- Fix removed or deprecated APIs: `new Buffer()` → `Buffer.from`/`Buffer.alloc`, `url.parse` → `new URL()` (check behaviour on relative and odd URLs), `punycode` module, deprecated `crypto` and `fs` usages.
-- Native modules (e.g. `bcrypt`, `sharp`) need versions built for the new Node. Rebuild and test.
-- Keep existing HTTP client libraries. Moving to native `fetch` is optional and only if behaviour (timeouts, errors, redirects) is identical.
+- Run the legacy tests and record the results as the baseline (pre-existing failures listed).
+- In the new project, add **black-box HTTP contract tests** (e.g. `test/contract/`) for each route in the feature inventory: status, relevant headers, cookies, and the exact JSON body (snapshots are fine). Include edge cases for path matching, query parsing (nested objects, arrays), empty bodies and error responses. The tests take the target from `CONTRACT_BASE_URL`.
+- **Record the snapshots against the running legacy app.** Don't add a mock toggle to `legacy/`. If its downstream URLs come from env, point them at a local stub server that serves the same fixtures as the new app's mocks. Otherwise record against the dev environment.
+- Run the same tests against the new app (mocks on) for every ported feature. They must pass unchanged. Changing a snapshot means a deviation, which needs user approval.
 
-### 3b. TypeScript → latest
-- Bump `typescript` and the `@types/*` packages, and set the tsconfig `target`/`lib` to what the Node version supports.
-- Use `module` / `moduleResolution` that match the module system (`nodenext` for Node projects, or keep the current settings if changing them would alter output). Replace deprecated options flagged by the new compiler.
-- Fix new type errors with behaviour-neutral changes only. No `any` sprinkling: use proper types or a narrow `// @ts-expect-error` with a reason.
-- Compare compiled output for runtime-relevant differences (e.g. class field semantics with `useDefineForClassFields`, decorators used by TypeORM or class-validator need `experimentalDecorators` kept as-is).
+## Step 4 — New project and porting
 
-### 3c. Express 4 → latest (5.x+)
-Run the official codemod first (`npx @expressjs/codemod upgrade`), then review every change. Key changes (always confirm against the Express migration guide):
+1. Create the new project at the root from the scaffold if one was provided. Otherwise use a fresh `package.json` (same name, scripts and module type as legacy), the latest Node LTS in `engines` and `.nvmrc`, the latest TypeScript with a fresh `tsconfig.json`, and the same folder layout as legacy.
+2. Dependencies: the same libraries as legacy, at their latest versions compatible with the new stack. Swap abandoned packages (e.g. `request`) only when required for the upgrade or a security fix, with identical behaviour.
+3. Port in this order, one change at a time:
+   1. Config and env loading, with the same variable names and defaults.
+   2. App bootstrap and middleware: the same middleware, **in the same order**, with the same options. Set explicitly any option whose default changed.
+   3. Error handler, with the same error response format and status codes.
+   4. Auth (Step 6).
+   5. Outbound clients and mocks (Step 5).
+   6. DB layer: the same schema, models and queries. Copy migrations unchanged; no new migrations.
+   7. Routes, feature by feature, with the same paths and handlers.
+   8. Static files and templates, copied unchanged.
+   9. Background jobs, workers and consumers.
+4. While porting, apply the porting notes below. After porting a group of routes, the official Express codemod (`npx @expressjs/codemod upgrade`) can be run on the new code, but review every change it makes.
+5. Run the contract tests for each ported feature.
+
+### Porting notes: Node.js → latest LTS
+- Docker image and CI runtime changes are deployment, so list them for the user rather than changing them.
+- Replace removed or deprecated APIs: `new Buffer()` → `Buffer.from`/`Buffer.alloc`, `url.parse` → `new URL()` (check behaviour on relative and odd URLs), `punycode` module, deprecated `crypto` and `fs` usages.
+- Native modules (e.g. `bcrypt`, `sharp`) need versions built for the new Node.
+- Keep the existing HTTP client libraries. Moving to native `fetch` is only allowed if behaviour (timeouts, errors, redirects) is identical.
+
+### Porting notes: TypeScript → latest
+- Set the tsconfig `target`/`lib` to what the Node version supports, and `module`/`moduleResolution` to match the module system (`nodenext` for Node projects).
+- Don't carry over deprecated compiler options; replace them with their current equivalents.
+- Type fixes must be behaviour-neutral. No `any` sprinkling: use proper types or a narrow `// @ts-expect-error` with a reason.
+- Watch for runtime-relevant compiler semantics: class fields under `useDefineForClassFields`, and decorators used by TypeORM or class-validator (keep `experimentalDecorators` / `emitDecoratorMetadata` if legacy used them).
+
+### Porting notes: Express 4 → latest (5.x+)
+Key changes (always confirm against the Express migration guide):
 
 | Express 4 | Express 5 | Parity note |
 |---|---|---|
@@ -128,18 +153,17 @@ Run the official codemod first (`npx @expressjs/codemod upgrade`), then review e
 | `req.host` without port | includes port | Check code using `req.host` |
 | `express.static` served dotfiles by default in some setups | `dotfiles` defaults to `'ignore'` | Set `dotfiles` explicitly if `.well-known` or similar must be served |
 
-Upgrade middleware to versions compatible with the target Express (`@types/express`, `cors`, `helmet`, `express-session`, `passport`, `multer`, rate limiters). Don't change their configuration semantics. Check each library's changelog for changed defaults and pin the old values explicitly.
+Use middleware versions compatible with the target Express (`@types/express`, `cors`, `helmet`, `express-session`, `passport`, `multer`, rate limiters). Don't change their configuration semantics. Check each library's changelog for changed defaults and pin the old values explicitly.
 
-### 3d. Other dependencies
-- Update the remaining dependencies to the latest versions compatible with the new stack, one group at a time, following each changelog.
-- Replace abandoned packages (e.g. `request`) only when required for the upgrade or a security fix, with identical behaviour.
-- ESLint: move to flat config if the new ESLint version requires it, keeping the same rules.
+### Porting notes: other tooling
+- For every other library, check its changelog between the legacy and new versions for changed defaults, and set the old values explicitly.
+- ESLint: use flat config (`eslint.config.*`) in the new project, with the same rules as legacy.
 
-## Step 4 — Mock layer for external integrations
+## Step 5 — Mock layer for external integrations
 
 The goal is to run and test the service without any downstream system and without changing other services or deployment.
 
-- Put each outbound integration behind a client module with an interface. If code calls `axios` directly in route handlers, extract a thin client that makes exactly the same calls (a behaviour-preserving refactor).
+- Put each outbound integration behind a client module with an interface. Where legacy calls `axios` directly in route handlers, port it as a thin client that makes exactly the same calls.
 - Choose the real or mock implementation in one place, driven by one env var.
 
 ```ts
@@ -173,10 +197,10 @@ Mock rules:
 - The database stays real (local or dev). Swapping in an in-memory DB changes query behaviour, so only do it if the user asks.
 - Contract tests run with mocks on.
 
-## Step 5 — Auth (port the existing flow, don't redesign it)
+## Step 6 — Auth (port the existing flow, don't redesign it)
 
 - Keep the same session cookie name and options, the secret source, the session store, Passport strategies and serialization, JWT algorithms, issuer/audience and expiry checks, and role checks.
-- When upgrading `express-session`, `passport` or JWT libraries, set any option whose *default* changed to the old value explicitly. (Passport 0.6+ changed session handling around login and logout: check `req.logout` callbacks and session regeneration.)
+- When moving to newer `express-session`, `passport` or JWT library versions, set any option whose *default* changed to the old value explicitly. (Passport 0.6+ changed session handling around login and logout: check `req.logout` callbacks and session regeneration.)
 - If a new version rejects the current setup (e.g. a weak secret or a missing algorithm), stop and tell the user. Changing secrets invalidates sessions and tokens.
 - Don't introduce a new auth library or model unless the user asks.
 
@@ -218,13 +242,14 @@ Rules for security fixes:
 - [ ] On the latest Node LTS, Express and TypeScript (versions recorded in the report)
 - [ ] Feature inventory fully checked off; any deviations approved
 - [ ] Every outbound integration mockable; the toggle works through `MOCK_EXTERNALS`
-- [ ] Only this service changed (no schema, other-service, infra or CI/CD changes)
+- [ ] Only backend code changed (no frontend apps, schema, other-service, infra or CI/CD changes)
+- [ ] `legacy/` untouched; deletion only on user approval
 - [ ] Scan findings fixed or reported; `npm audit` and other scans re-run show no new issues
 - [ ] Deployment changes (Node runtime, base image, start command) listed for the user, not applied
 
 ## Report after each step
 
-- Step and files changed
+- Module or feature ported, and files changed
 - What changed, and anything that deviates from current behaviour (with the reason)
 - Feature inventory items verified
 - Security fixes made (scanner rule or ID, file, change) and findings reported but not fixed
